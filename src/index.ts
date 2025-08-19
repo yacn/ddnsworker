@@ -184,7 +184,7 @@ export default {
 
 		// TODO: enforce via cloudflare WAF && use Access
 		if (request.headers.get('My-Secret-Token') !== env.MY_SECRET_TOKEN) {
-			return new Response("unauthorized: " + connectingIp + '\n', {status: 400, statusText: "Unauthorized"});
+			return new Response("unauthorized: " + connectingIp + '\n', {status: 401, statusText: "Unauthorized"});
 		}
 
 
