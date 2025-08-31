@@ -3,6 +3,8 @@
 // Runtime types generated with workerd@1.20250816.0 2025-08-19 
 declare namespace Cloudflare {
 	interface Env {
+        MY_SECRET_TOKEN: string; // secret
+        CF_TOKEN: string; // secret
 	}
 }
 interface Env extends Cloudflare.Env {}
