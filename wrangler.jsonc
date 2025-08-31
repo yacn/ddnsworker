@@ -9,7 +9,13 @@
 	"compatibility_date": "2025-08-19",
 	"observability": {
 		"enabled": true
-	}
+	},
+	"routes": [
+		{
+			"pattern": "ddns.yacn.me",
+			"custom_domain": true
+		}
+	]
 	/**
 	 * Environment Variables
 	 * https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables
