@@ -148,22 +148,26 @@ class CloudflareApiV4 {
 }
 
 async function maybeGetCloudflareDNSRecord(cfApi: CloudflareApiV4, zoneId: string, name: string): Promise<CloudflareDNSRecord | undefined> {
+	const logger = function(fn: (...data: any[]) => void, props: any) {
+		const base = {'fn': 'maybeGetCloudflareDNSRecord', zoneId: zoneId, name: name};
+		fn({...base, ...props})
+	};
 	const resp = await cfApi.getDNSRecord(zoneId, name);
 	if (!resp.ok) {
-		console.error({'fn': 'maybeGetCloudflareDNSRecord', zoneId: zoneId, name: name, message: 'failed to get dns record', status: resp.status, statusText: resp.statusText, body: await resp.text()})
+		logger(console.error, {message: 'failed to get dns record', status: resp.status, statusText: resp.statusText, body: await resp.text()})
 		return undefined;
 	}
 	const data: CfListResult = await resp.json();
-	console.info({'fn': 'maybeGetCloudflareDNSRecord', zoneId: zoneId, name: name, num_results: data.result.length})
+	logger(console.info, {num_results: data.result.length})
 	let records: CloudflareDNSRecord[] = data.result;
 	if (records.length == 0) {
-		console.info({'fn': 'maybeGetCloudflareDNSRecord', zoneId: zoneId, name: name, message: 'does not exist'})
+		logger(console.info, {message: 'does not exist'})
 		return CloudflareDNSRecord.A(zoneId, name, "")
 	} else if (records.length == 1) {
-		console.info({'fn': 'maybeGetCloudflareDNSRecord', zoneId: zoneId, name: name, message: 'found record', record: records[0]})
+		logger(console.info, {message: 'found record', record: records[0]})
 		return records[0];
 	} else {
-		console.error({'fn': 'maybeGetCloudflareDNSRecord', zoneId: zoneId, name: name, message: 'failed to find object id (too many results)', num_results: data['result'].length, results: records})
+		logger(console.error, {message: 'failed to find object id (too many results)', num_results: data['result'].length, results: records})
 		return undefined;
 	}
 }
@@ -182,12 +186,9 @@ async function createOrUpdateDNSRecord(cfApi: CloudflareApiV4, zoneId: string, d
 			logger(console.info, {message: 'no changes detected'})
 			return new Response(null, {status: 204});
 		}
-		if (["127.0.0.1", "::1"].includes(value)) {
-			logger(console.debug, {message: 'ignoring loopback address', value: value})
-			return new Response("bad request\n", {status: 400, statusText: "Bad Request"})
-		}
+		let prevIP = dnsRecord.content;
 		dnsRecord.content = value;
-		logger(console.info, {message: 'updating record', newIP: value, record: dnsRecord})
+		logger(console.info, {message: 'updating record', oldIP: prevIP, newIP: value})
 		return await cfApi.updateDNSRecord(dnsRecord)
 	} else {
 		dnsRecord.content = value;
@@ -204,9 +205,13 @@ interface UpdateRequest {
 export default {
 
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+		const logger = function(fn: (...data: any[]) => void, props: any) {
+			const base = {'fn': 'fetch'};
+			fn({...base, ...props})
+		};
 		const connectingIp = request.headers.get('cf-connecting-ip');
 		if (connectingIp === null) {
-			console.debug({'fn': 'fetch', message: 'missing cf-connecting-ip', headers: request.headers})
+			logger(console.error, {message: 'missing cf-connecting-ip', headers: request.headers})
 			return new Response("bad request\n", {status: 400, statusText: "Bad Request"})
 		}
 
@@ -222,23 +227,22 @@ export default {
 				return new Response("unauthorized: " + connectingIp + '\n', {status: 401, statusText: "Unauthorized"});
 			}
 			let body: UpdateRequest = await request.json();
-			console.info({'fn': 'fetch', message: 'update request', body: body})
+			logger(console.info, {message: 'update request', body: body})
 			let zoneId = body.zone_id;
 			let record = body.record;
 			const isEmpty = function(s: string): boolean {
 				return s === null || s === undefined || s === ""
 			}
 			if (isEmpty(zoneId) || isEmpty(record)) {
-				console.info({'fn': 'fetch', message: 'missing zone_id or record', zoneId: zoneId, record: record})
+				logger(console.error, {message: 'missing zone_id or record', zoneId: zoneId, record: record})
 				return new Response("bad request\n", {status: 400, statusText: "Bad Request"})
 			}
 
 			let cfApi = new CloudflareApiV4(env.CF_TOKEN);
 			return createOrUpdateDNSRecord(cfApi, zoneId, record, connectingIp)
 		}
-
-		console.info({'fn': 'fetch', method: request.method, url: request.url, message: 'no matching route'})
-		return new Response("bad request\n", {status: 400, statusText: "Bad Request"})
+		logger(console.warn, {message: 'no matching route', method: request.method, url: request.url})
+		return new Response("not found\n", {status: 404, statusText: "Not Found"})
 	},
 
 } satisfies ExportedHandler<Env>;
