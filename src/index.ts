@@ -117,11 +117,12 @@ class CloudflareApiV4 {
 			},
 		}
 
+		let bodySection = {}
 		if (body !== undefined) {
 			init.body = body;
+			bodySection = {body: body}
 		}
-
-		console.info({'fn': 'CloudflareAPIV4.request', method: m, url: reqUrl.toString(), body: body})
+		console.info({...{'fn': 'CloudflareAPIV4.request', method: m, url: reqUrl.toString(), ...bodySection}})
 		return await fetch(reqUrl.toString(), init);
 	}
 
@@ -156,60 +157,95 @@ class CloudflareApiV4 {
 async function maybeGetCloudflareDNSRecord(cfApi: CloudflareApiV4, zoneId: string, name: string): Promise<CloudflareDNSRecord | undefined> {
 	const resp = await cfApi.getDNSRecord(zoneId, name);
 	if (!resp.ok) {
-		console.error({'fn': 'fetch.maybeGetCloudflareDNSRecord', message: 'failed to get dns record', zoneId: zoneId, name: name, status: resp.status, statusText: resp.statusText, body: await resp.text()})
+		console.error({'fn': 'maybeGetCloudflareDNSRecord', zoneId: zoneId, name: name, message: 'failed to get dns record', status: resp.status, statusText: resp.statusText, body: await resp.text()})
 		return undefined;
 	}
 	const data: CfListResult = await resp.json();
-	console.info({'fn': 'fetch.maybeGetCloudflareDNSRecord', zoneId: zoneId, name: name, num_results: data.result.length})
+	console.info({'fn': 'maybeGetCloudflareDNSRecord', zoneId: zoneId, name: name, num_results: data.result.length})
 	let records: CloudflareDNSRecord[] = data.result;
 	if (records.length == 0) {
-		console.info({'fn': 'fetch.maybeGetCloudflareDNSRecord', message: 'does not exist', zoneId: zoneId, name: name})
+		console.info({'fn': 'maybeGetCloudflareDNSRecord', zoneId: zoneId, name: name, message: 'does not exist'})
 		return CloudflareDNSRecord.A(zoneId, name, "")
 	} else if (records.length == 1) {
-		console.info({'fn': 'fetch.maybeGetCloudflareDNSRecord', message: 'found record', record: records[0]})
+		console.info({'fn': 'maybeGetCloudflareDNSRecord', zoneId: zoneId, name: name, message: 'found record', record: records[0]})
 		return records[0];
 	} else {
-		console.error({'fn': 'fetch.maybeGetCloudflareDNSRecord', message: 'failed to find object id (too many results)', zoneId: zoneId, name: name, num_results: data['result'].length, results: records})
+		console.error({'fn': 'maybeGetCloudflareDNSRecord', zoneId: zoneId, name: name, message: 'failed to find object id (too many results)', num_results: data['result'].length, results: records})
 		return undefined;
 	}
 }
 
+async function createOrUpdateDNSRecord(cfApi: CloudflareApiV4, zoneId: string, domain: string, value: string): Promise<Response> {
+	const logger = function(fn: (...data: any[]) => void, props: any) {
+		const base = {'fn': 'createOrUpdateDNSRecord'};
+		fn({...base, ...props})
+	};
+	let dnsRecord = await maybeGetCloudflareDNSRecord(cfApi, zoneId, domain);
+	if (dnsRecord === undefined) {
+		return new Response("internal error", {status: 500, statusText: "Internal Server Error"})
+	}
+	if (dnsRecord.id !== undefined) {
+		if (dnsRecord.content == value) {
+			logger(console.info, {message: 'no changes detected'})
+			return new Response(null, {status: 204});
+		}
+		if (["127.0.0.1", "::1"].includes(value)) {
+			logger(console.debug, {message: 'ignoring loopback address', value: value})
+			return new Response("bad request\n", {status: 400, statusText: "Bad Request"})
+		}
+		dnsRecord.content = value;
+		logger(console.info, {message: 'updating record', newIP: value, record: dnsRecord})
+		return await cfApi.updateDNSRecord(dnsRecord)
+	} else {
+		dnsRecord.content = value;
+		logger(console.info, {message: 'creating record', record: dnsRecord})
+		return await cfApi.createDNSRecord(dnsRecord)
+	}
+}
+
+interface UpdateRequest {
+	zone_id: string;
+	record: string;	
+}
+
 export default {
 
-	async fetch(request, env, ctx): Promise<Response> {
+	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 		const connectingIp = request.headers.get('cf-connecting-ip');
 		if (connectingIp === null) {
-			return new Response("bad request", {status: 400, statusText: "Bad Request"});
+			console.debug({'fn': 'fetch', message: 'missing cf-connecting-ip', headers: request.headers})
+			return new Response("bad request\n", {status: 400, statusText: "Bad Request"})
 		}
 
-		// TODO: enforce via cloudflare WAF && use Access
-		if (request.headers.get('My-Secret-Token') !== env.MY_SECRET_TOKEN) {
-			return new Response("unauthorized: " + connectingIp + '\n', {status: 401, statusText: "Unauthorized"});
+		const url = new URL(request.url);
+		const urlPath = url.pathname;
+		if (request.method == HttpMethod.GET && urlPath == '/') {
+			return new Response(connectingIp + "\n", {status: 200, statusText: 'OK'})
 		}
 
-
-		let cfApi = new CloudflareApiV4(env.CF_TOKEN);
-
-		let dnsRecord = await maybeGetCloudflareDNSRecord(cfApi, env.CF_ZONE_ID, env.DDNS_DOMAIN);
-		if (dnsRecord === undefined) {
-			return new Response("internal error", {status: 500, statusText: "Internal Server Error"})
-		}
-		if (dnsRecord.id !== undefined) {
-			if (dnsRecord.content == connectingIp) {
-				console.info({'fn': 'fetch', message: 'no changes detected'})
-				return new Response(null, {status: 204});
+		if (request.method == HttpMethod.POST && urlPath == '/update') {
+			// TODO: enforce via cloudflare WAF && use Access
+			if (request.headers.get('My-Secret-Token') !== env.MY_SECRET_TOKEN) {
+				return new Response("unauthorized: " + connectingIp + '\n', {status: 401, statusText: "Unauthorized"});
 			}
-			if (["127.0.0.1", "::1"].includes(connectingIp)) {
-				return new Response("bad request no private localhost IP\n", {status: 400, statusText: "Bad Request"})
+			let body: UpdateRequest = await request.json();
+			console.info({'fn': 'fetch', message: 'update request', body: body})
+			let zoneId = body.zone_id;
+			let record = body.record;
+			const isEmpty = function(s: string): boolean {
+				return s === null || s === undefined || s === ""
 			}
-			console.info({'fn': 'fetch', message: 'updating record', newIP: connectingIp, record: dnsRecord })
-			dnsRecord.content = connectingIp;
-			return await cfApi.updateDNSRecord(dnsRecord)
-		} else {
-			dnsRecord.content = connectingIp;
-			console.info({'fn': 'fetch', message: 'creating record', record: dnsRecord})
-			return await cfApi.createDNSRecord(dnsRecord)
+			if (isEmpty(zoneId) || isEmpty(record)) {
+				console.info({'fn': 'fetch', message: 'missing zone_id or record', zoneId: zoneId, record: record})
+				return new Response("bad request\n", {status: 400, statusText: "Bad Request"})
+			}
+
+			let cfApi = new CloudflareApiV4(env.CF_TOKEN);
+			return createOrUpdateDNSRecord(cfApi, zoneId, record, connectingIp)
 		}
+
+		console.info({'fn': 'fetch', method: request.method, url: request.url, message: 'no matching route'})
+		return new Response("bad request\n", {status: 400, statusText: "Bad Request"})
 	},
 
 } satisfies ExportedHandler<Env>;
