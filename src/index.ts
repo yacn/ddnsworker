@@ -82,20 +82,13 @@ class CloudflareDNSRecord  {
 			return`${prev}, ${key}: ${part}`;
 		}, `DNSRecord(zoneId: ${this.zoneId}, type: ${this.type}, name: ${this.name}`) + ')';
 	}
-
-
-	static toAPIJSONReplacer(key: string, value: any) {
-		let apiJSONProperties = ["name", "type", "comment", "content", "proxied"];
-		if (apiJSONProperties.includes(key)) {
-			return value;
-		}
-		return undefined;
-	}
 };
 
 class CloudflareApiV4 {
 	private baseUrl: URL;
 	private authToken: string;
+
+	static dnsRecordJSONProperties = ["name", "type", "comment", "content", "proxied"];
 
 	constructor(authToken: string, baseUrl?: string) {
 		this.authToken = authToken;
@@ -117,12 +110,10 @@ class CloudflareApiV4 {
 			},
 		}
 
-		let bodySection = {}
 		if (body !== undefined) {
 			init.body = body;
-			bodySection = {body: body}
 		}
-		console.info({...{'fn': 'CloudflareAPIV4.request', method: m, url: reqUrl.toString(), ...bodySection}})
+		console.info({'fn': 'CloudflareAPIV4.request', method: m, url: reqUrl.toString(), body: body})
 		return await fetch(reqUrl.toString(), init);
 	}
 
@@ -145,12 +136,14 @@ class CloudflareApiV4 {
 
 	async createDNSRecord(record: CloudflareDNSRecord): Promise<Response> {
 		console.info({'fn': 'CloudflareAPIV4.createDNSRecord', record: record})
-		return await this.post(`zones/${record.zoneId}/dns_records`, JSON.stringify(record, CloudflareDNSRecord.toAPIJSONReplacer));
+		let body = JSON.stringify(record, CloudflareApiV4.dnsRecordJSONProperties);
+		return await this.post(`zones/${record.zoneId}/dns_records`, body);
 	}
 
 	async updateDNSRecord(record: CloudflareDNSRecord): Promise<Response> {
 		console.info({'fn': 'CloudflareAPIV4.updateDNSRecord', record: record})
-		return await this.patch(`zones/${record.zoneId}/dns_records/${record.id}`, JSON.stringify(record, CloudflareDNSRecord.toAPIJSONReplacer));
+		let body = JSON.stringify(record, CloudflareApiV4.dnsRecordJSONProperties);
+		return await this.patch(`zones/${record.zoneId}/dns_records/${record.id}`, body);
 	}
 }
 
