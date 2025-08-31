@@ -111,7 +111,7 @@ class CloudflareApiV4 {
 		if (body !== undefined) {
 			init.body = body;
 		}
-		console.info({'fn': 'CloudflareAPIV4.request', method: m, url: reqUrl.toString(), body: body})
+		console.info({'fn': 'CloudflareAPIV4.request', method: m, url: reqUrl.toString(), ...(body !== undefined ? {body: body} : {})})
 		return await fetch(reqUrl.toString(), init);
 	}
 
