@@ -177,6 +177,10 @@ async function createOrUpdateDNSRecord(cfApi: CloudflareApiV4, zoneId: string, d
 		const base = {'fn': 'createOrUpdateDNSRecord'};
 		fn({...base, ...props})
 	};
+	if (["127.0.0.1", "::1"].includes(value)) {
+		logger(console.info, {message: 'ignoring loopback address', value: value})
+		return new Response("bad request\n", {status: 400, statusText: "Bad Request"})
+	}
 	let dnsRecord = await maybeGetCloudflareDNSRecord(cfApi, zoneId, domain);
 	if (dnsRecord === undefined) {
 		return new Response("internal error", {status: 500, statusText: "Internal Server Error"})
