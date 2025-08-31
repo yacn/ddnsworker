@@ -34,17 +34,15 @@ type CfListResult = {
 
 class CloudflareDNSRecord  {
 	name: string;
-	zoneId: string;
 	type: string;
 	id?: string;
 	content?: string;
 	comment: string = "dynamic dns record set via worker, last updated " + new Date().toISOString();
 	proxied: boolean = false;
 
-	constructor(zoneId: string, type: string, name: string);
-	constructor(zoneId: string, type: string, name: string, content: string);
-	constructor(zoneId: string, type: string, name: string, content?: string, comment?: string, proxied?: boolean, cfObjectId?: string) {
-		this.zoneId = zoneId;
+	constructor(type: string, name: string);
+	constructor(type: string, name: string, content: string);
+	constructor(type: string, name: string, content?: string, comment?: string, proxied?: boolean, cfObjectId?: string) {
 		this.type = type;
 		this.name = name;
 
@@ -62,11 +60,6 @@ class CloudflareDNSRecord  {
 		}
 	}
 
-	static A(zoneId: string, name: string, value: string): CloudflareDNSRecord {
-		//return new CloudflareDNSRecord(zoneId, "A", name, value);
-		return new this(zoneId, "A", name, value);
-	}
-
 	toString(): string {
 		let parts = {
 			"id": this.id,
@@ -80,7 +73,12 @@ class CloudflareDNSRecord  {
 				return prev;
 			}
 			return`${prev}, ${key}: ${part}`;
-		}, `DNSRecord(zoneId: ${this.zoneId}, type: ${this.type}, name: ${this.name}`) + ')';
+		}, `DNSRecord(type: ${this.type}, name: ${this.name}`) + ')';
+	}
+
+	toJSON(): any {
+		const { id: _, ...rest } = this;
+		return rest;
 	}
 };
 
@@ -134,16 +132,14 @@ class CloudflareApiV4 {
 		return await this.get(`zones/${zoneId}/dns_records`, new URLSearchParams({"name.exact": name}));
 	}
 
-	async createDNSRecord(record: CloudflareDNSRecord): Promise<Response> {
+	async createDNSRecord(zoneId: string, record: CloudflareDNSRecord): Promise<Response> {
 		console.info({'fn': 'CloudflareAPIV4.createDNSRecord', record: record})
-		let body = JSON.stringify(record, CloudflareApiV4.dnsRecordJSONProperties);
-		return await this.post(`zones/${record.zoneId}/dns_records`, body);
+		return await this.post(`zones/${zoneId}/dns_records`, JSON.stringify(record));
 	}
 
-	async updateDNSRecord(record: CloudflareDNSRecord): Promise<Response> {
+	async updateDNSRecord(zoneId: string, record: CloudflareDNSRecord): Promise<Response> {
 		console.info({'fn': 'CloudflareAPIV4.updateDNSRecord', record: record})
-		let body = JSON.stringify(record, CloudflareApiV4.dnsRecordJSONProperties);
-		return await this.patch(`zones/${record.zoneId}/dns_records/${record.id}`, body);
+		return await this.patch(`zones/${zoneId}/dns_records/${record.id}`, JSON.stringify(record));
 	}
 }
 
@@ -162,7 +158,7 @@ async function maybeGetCloudflareDNSRecord(cfApi: CloudflareApiV4, zoneId: strin
 	let records: CloudflareDNSRecord[] = data.result;
 	if (records.length == 0) {
 		logger(console.info, {message: 'does not exist'})
-		return CloudflareDNSRecord.A(zoneId, name, "")
+		return new CloudflareDNSRecord("A", name)
 	} else if (records.length == 1) {
 		logger(console.info, {message: 'found record', record: records[0]})
 		return records[0];
@@ -193,11 +189,11 @@ async function createOrUpdateDNSRecord(cfApi: CloudflareApiV4, zoneId: string, d
 		let prevIP = dnsRecord.content;
 		dnsRecord.content = value;
 		logger(console.info, {message: 'updating record', oldIP: prevIP, newIP: value})
-		return await cfApi.updateDNSRecord(dnsRecord)
+		return await cfApi.updateDNSRecord(zoneId, dnsRecord)
 	} else {
 		dnsRecord.content = value;
 		logger(console.info, {message: 'creating record', record: dnsRecord})
-		return await cfApi.createDNSRecord(dnsRecord)
+		return await cfApi.createDNSRecord(zoneId, dnsRecord)
 	}
 }
 
